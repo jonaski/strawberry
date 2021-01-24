@@ -24,8 +24,11 @@
 
 #include "config.h"
 
+#include <memory>
+
 #include <QtGlobal>
 #include <QObject>
+#include <QList>
 #include <QHash>
 #include <QMap>
 #include <QSet>
@@ -34,6 +37,7 @@
 #include <QUrl>
 
 #include "directory.h"
+#include "core/tagreaderclient.h"
 #include "core/song.h"
 
 class QThread;
@@ -91,6 +95,7 @@ class CollectionWatcher : public QObject {
   // The transaction also caches the list of songs in this directory according to the collection.
   // Multiple calls to FindSongsInSubdirectory during one transaction will only result in one call to CollectionBackend::FindSongsInDirectory.
   class ScanTransaction {
+
    public:
     ScanTransaction(CollectionWatcher *watcher, const int dir, const bool incremental, const bool ignores_mtime, const bool mark_songs_unavailable);
     ~ScanTransaction();
@@ -101,8 +106,8 @@ class CollectionWatcher : public QObject {
     SubdirectoryList GetImmediateSubdirs(const QString &path);
     SubdirectoryList GetAllSubdirs();
 
-    void AddToProgress(int n = 1);
-    void AddToProgressMax(int n);
+    void AddToProgress(const qint64 n = 1);
+    void AddToProgressMax(const qint64 n);
 
     // Emits the signals for new & deleted songs etc and clears the lists. This causes the new stuff to be updated on UI.
     void CommitNewOrUpdatedSongs();
@@ -119,17 +124,22 @@ class CollectionWatcher : public QObject {
     SubdirectoryList touched_subdirs;
     SubdirectoryList deleted_subdirs;
 
+    QList<TagReaderReply*> tagreader_replies_;
+    QMap<TagReaderReply*, std::shared_ptr<QTimer>> tagreader_timers_;
+
    private:
     ScanTransaction(const ScanTransaction&) {}
-    ScanTransaction& operator=(const ScanTransaction&) { return *this; }
+    ScanTransaction &operator=(const ScanTransaction&) { return *this; }
 
     int task_id_;
-    int progress_;
-    int progress_max_;
+    qint64 progress_;
+    qint64 progress_max_;
 
     int dir_;
+
     // Incremental scan enters a directory only if it has changed since the last scan.
     bool incremental_;
+
     // This type of scan updates every file in a folder that's being scanned.
     // Even if it detects the file hasn't changed since the last scan.
     // Also, since it's ignoring mtimes on folders too, it will go as deep in the folder hierarchy as it's possible.
@@ -146,6 +156,7 @@ class CollectionWatcher : public QObject {
 
     SubdirectoryList known_subdirs_;
     bool known_subdirs_dirty_;
+
   };
 
  private slots:
@@ -155,7 +166,11 @@ class CollectionWatcher : public QObject {
   void FullScanNow();
   void RescanTracksNow();
   void RescanPathsNow();
-  void ScanSubdirectory(const QString &path, const Subdirectory &subdir, ScanTransaction *t, bool force_noincremental = false);
+  void ScanSubdirectory(const QString &path, const Subdirectory &subdir, std::shared_ptr<ScanTransaction> t, bool force_noincremental = false);
+  void UpdateNonCueAssociatedSongFinished(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const Song &matching_song, const QUrl &image);
+  void UpdateNonCueAssociatedSongTimeout(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const Song &matching_song, const QUrl &image);
+  void ScanNewFileFinished(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const QUrl &image);
+  void ScanNewFileTimeout(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const QUrl &image);
 
  private:
   static bool FindSongByPath(const SongList &list, const QString &path, Song *out);
@@ -170,14 +185,14 @@ class CollectionWatcher : public QObject {
   void PerformScan(bool incremental, bool ignore_mtimes);
 
   // Updates the sections of a cue associated and altered (according to mtime) media file during a scan.
-  void UpdateCueAssociatedSongs(const QString &file, const QString &path, const QString &matching_cue, const QUrl &image, ScanTransaction *t);
+  void UpdateCueAssociatedSongs(const QString &file, const QString &path, const QString &matching_cue, const QUrl &image, std::shared_ptr<ScanTransaction> t);
   // Updates a single non-cue associated and altered (according to mtime) song during a scan.
-  void UpdateNonCueAssociatedSong(const QString &file, const Song &matching_song, const QUrl &image, bool cue_deleted, ScanTransaction *t);
+  void UpdateNonCueAssociatedSong(const QString &file, const Song &matching_song, const QUrl &image, bool cue_deleted, std::shared_ptr<ScanTransaction> t);
   // Updates a new song with some metadata taken from it's equivalent old song (for example rating and score).
-  void PreserveUserSetData(const QString &file, const QUrl &image, const Song &matching_song, Song *out, ScanTransaction *t);
+  void PreserveUserSetData(const QString &file, const QUrl &image, const Song &matching_song, Song *out, std::shared_ptr<ScanTransaction> t);
   // Scans a single media file that's present on the disk but not yet in the collection.
   // It may result in a multiple files added to the collection when the media file has many sections (like a CUE related media file).
-  SongList ScanNewFile(const QString &file, const QString &path, const QString &matching_cue, QSet<QString> *cues_processed);
+  SongList ScanNewFile(std::shared_ptr<ScanTransaction> t, const QString &file, const QString &path, const QString &matching_cue, QSet<QString> *cues_processed, const QUrl &image);
 
  private:
   Song::Source source_;
@@ -210,9 +225,11 @@ class CollectionWatcher : public QObject {
 
   static QStringList sValidImages;
 
-  SongList song_rescan_queue_; // Set by ui thread
+  SongList song_rescan_queue_; // Set by the UI thread
 
   QThread *original_thread_;
+
+  QList<std::shared_ptr<ScanTransaction>> transactions_;
 
 };
 

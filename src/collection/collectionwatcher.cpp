@@ -21,6 +21,7 @@
 
 #include "config.h"
 
+#include <memory>
 #include <cassert>
 
 #include <QObject>
@@ -145,14 +146,14 @@ CollectionWatcher::ScanTransaction::~ScanTransaction() {
 
 }
 
-void CollectionWatcher::ScanTransaction::AddToProgress(int n) {
+void CollectionWatcher::ScanTransaction::AddToProgress(const qint64 n) {
 
   progress_ += n;
   watcher_->task_manager_->SetTaskProgress(task_id_, progress_, progress_max_);
 
 }
 
-void CollectionWatcher::ScanTransaction::AddToProgressMax(int n) {
+void CollectionWatcher::ScanTransaction::AddToProgressMax(const qint64 n) {
 
   progress_max_ += n;
   watcher_->task_manager_->SetTaskProgress(task_id_, progress_, progress_max_);
@@ -212,8 +213,9 @@ void CollectionWatcher::ScanTransaction::CommitNewOrUpdatedSongs() {
   }
   new_subdirs.clear();
 
-}
+  emit watcher_->CompilationsNeedUpdating();
 
+}
 
 SongList CollectionWatcher::ScanTransaction::FindSongsInSubdirectory(const QString &path) {
 
@@ -271,6 +273,7 @@ SubdirectoryList CollectionWatcher::ScanTransaction::GetAllSubdirs() {
   if (known_subdirs_dirty_)
     SetKnownSubdirs(watcher_->backend_->SubdirsInDirectory(dir_));
   return known_subdirs_;
+
 }
 
 void CollectionWatcher::AddDirectory(const Directory &dir, const SubdirectoryList &subdirs) {
@@ -279,30 +282,44 @@ void CollectionWatcher::AddDirectory(const Directory &dir, const SubdirectoryLis
 
   if (subdirs.isEmpty()) {
     // This is a new directory that we've never seen before. Scan it fully.
-    ScanTransaction transaction(this, dir.id, false, false, mark_songs_unavailable_);
-    transaction.SetKnownSubdirs(subdirs);
-    transaction.AddToProgressMax(1);
-    ScanSubdirectory(dir.path, Subdirectory(), &transaction);
+    std::shared_ptr<ScanTransaction> transaction(std::make_shared<ScanTransaction>(this, dir.id, false, false, mark_songs_unavailable_));
+    transactions_ << transaction;
+    transaction->SetKnownSubdirs(subdirs);
+    //transaction->AddToProgressMax(1);
+    ScanSubdirectory(dir.path, Subdirectory(), transaction);
+    if (transaction->tagreader_replies_.count() == 0 && transactions_.contains(transaction)) {
+      transactions_.removeAll(transaction);
+    }
   }
   else {
     // We can do an incremental scan - looking at the mtimes of each subdirectory and only rescan if the directory has changed.
-    ScanTransaction transaction(this, dir.id, true, false, mark_songs_unavailable_);
-    transaction.SetKnownSubdirs(subdirs);
-    transaction.AddToProgressMax(subdirs.count());
+    std::shared_ptr<ScanTransaction> transaction(std::make_shared<ScanTransaction>(this, dir.id, true, false, mark_songs_unavailable_));
+    transactions_ << transaction;
+    transaction->SetKnownSubdirs(subdirs);
+    //transaction->AddToProgressMax(subdirs.count());
     for (const Subdirectory &subdir : subdirs) {
-      if (stop_requested_) break;
 
-      if (scan_on_startup_) ScanSubdirectory(subdir.path, subdir, &transaction);
+      if (stop_requested_) {
+        transactions_.removeAll(transaction);
+        break;
+      }
+
+      if (scan_on_startup_) ScanSubdirectory(subdir.path, subdir, transaction);
 
       if (monitor_) AddWatch(dir, subdir.path);
     }
+
+    if (transaction->tagreader_replies_.count() == 0 && transactions_.contains(transaction)) {
+      transactions_.removeAll(transaction);
+    }
+
   }
 
-  emit CompilationsNeedUpdating();
+  //emit CompilationsNeedUpdating();
 
 }
 
-void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory &subdir, ScanTransaction *t, bool force_noincremental) {
+void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory &subdir, std::shared_ptr<ScanTransaction> t, bool force_noincremental) {
 
   QFileInfo path_info(path);
   QDir path_dir(path);
@@ -312,7 +329,7 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
     QString real_path = path_info.symLinkTarget();
     for (const Directory &dir : watched_dirs_) {
       if (real_path.startsWith(dir.path)) {
-        t->AddToProgress(1);
+        //t->AddToProgress(1);
         return;
       }
     }
@@ -320,13 +337,13 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
 
   // Do not scan directories containing a .nomedia or .nomusic file
   if (path_dir.exists(kNoMediaFile) || path_dir.exists(kNoMusicFile)) {
-    t->AddToProgress(1);
+    //t->AddToProgress(1);
     return;
   }
 
   if (!t->ignores_mtime() && !force_noincremental && t->is_incremental() && subdir.mtime == path_info.lastModified().toSecsSinceEpoch()) {
     // The directory hasn't changed since last time
-    t->AddToProgress(1);
+    //t->AddToProgress(1);
     return;
   }
 
@@ -339,7 +356,7 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
   SubdirectoryList previous_subdirs = t->GetImmediateSubdirs(path);
   for (const Subdirectory &prev_subdir : previous_subdirs) {
     if (!QFile::exists(prev_subdir.path) && prev_subdir.path != path) {
-      t->AddToProgressMax(1);
+      //t->AddToProgressMax(1);
       ScanSubdirectory(prev_subdir.path, prev_subdir, t, true);
     }
   }
@@ -384,7 +401,7 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
   for (const QString &file : files_on_disk) {
     if (stop_requested_) return;
 
-    // associated cue
+    // Associated CUE
     QString matching_cue = NoExtensionPart(file) + ".cue";
 
     Song matching_song(source_);
@@ -401,14 +418,14 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
         continue;
       }
 
-      // cue sheet's path from collection (if any)
+      // CUE sheet's path from collection (if any)
       QString song_cue = matching_song.cue_path();
       qint64 song_cue_mtime = GetMtimeForCue(song_cue);
 
       bool cue_deleted = song_cue_mtime == 0 && matching_song.has_cue();
       bool cue_added = matching_cue_mtime != 0 && !matching_song.has_cue();
 
-      // watch out for cue songs which have their mtime equal to qMax(media_file_mtime, cue_sheet_mtime)
+      // Watch out for cue songs which have their mtime equal to qMax(media_file_mtime, cue_sheet_mtime)
       bool changed = (matching_song.mtime() != qMax(file_info.lastModified().toSecsSinceEpoch(), song_cue_mtime)) || cue_deleted || cue_added;
 
       // Also want to look to see whether the album art has changed
@@ -417,14 +434,14 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
         changed = true;
       }
 
-      // the song's changed - reread the metadata from file
+      // The song's changed - reread the metadata from file
       if (t->ignores_mtime() || changed) {
         qLog(Debug) << file << "changed";
 
-        // if cue associated...
+        // If CUE associated...
         if (!cue_deleted && (matching_song.has_cue() || cue_added)) {
           UpdateCueAssociatedSongs(file, path, matching_cue, image, t);
-          // if no cue or it's about to lose it...
+          // If no CUE or it's about to lose it...
         }
         else {
           UpdateNonCueAssociatedSong(file, matching_song, image, cue_deleted, t);
@@ -436,16 +453,17 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
 
     }
     else {
+      // Choose an image for the song(s)
+      QUrl image = ImageForSong(file, album_art);
+
       // The song is on disk but not in the DB
-      SongList song_list = ScanNewFile(file, path, matching_cue, &cues_processed);
+      SongList song_list = ScanNewFile(t, file, path, matching_cue, &cues_processed, image);
 
       if (song_list.isEmpty()) {
         continue;
       }
 
       qLog(Debug) << file << "created";
-      // choose an image for the song(s)
-      QUrl image = ImageForSong(file, album_art);
 
       for (Song song : song_list) {
         song.set_directory_id(t->dir());
@@ -478,18 +496,24 @@ void CollectionWatcher::ScanSubdirectory(const QString &path, const Subdirectory
     t->deleted_subdirs << updated_subdir;
   }
 
-  t->AddToProgress(1);
+  //t->AddToProgress(1);
 
   // Recurse into the new subdirs that we found
-  t->AddToProgressMax(my_new_subdirs.count());
+  //t->AddToProgressMax(my_new_subdirs.count());
   for (const Subdirectory &my_new_subdir : my_new_subdirs) {
     if (stop_requested_) return;
     ScanSubdirectory(my_new_subdir.path, my_new_subdir, t, true);
   }
 
+  if (t->tagreader_replies_.count() == 0 && transactions_.contains(t)) {
+    transactions_.removeAll(t);
+  }
+
 }
 
-void CollectionWatcher::UpdateCueAssociatedSongs(const QString &file, const QString &path, const QString &matching_cue, const QUrl &image, ScanTransaction *t) {
+void CollectionWatcher::UpdateCueAssociatedSongs(const QString &file, const QString &path, const QString &matching_cue, const QUrl &image, std::shared_ptr<ScanTransaction> t) {
+
+  t->AddToProgressMax(1);
 
   QFile cue(matching_cue);
   cue.open(QIODevice::ReadOnly);
@@ -509,10 +533,10 @@ void CollectionWatcher::UpdateCueAssociatedSongs(const QString &file, const QStr
     cue_song.set_directory_id(t->dir());
 
     Song matching = sections_map[cue_song.beginning_nanosec()];
-    // a new section
+    // A new section
     if (!matching.is_valid()) {
       t->new_songs << cue_song;
-      // changed section
+      // Changed section
     }
     else {
       PreserveUserSetData(file, image, matching, &cue_song, t);
@@ -520,18 +544,22 @@ void CollectionWatcher::UpdateCueAssociatedSongs(const QString &file, const QStr
     }
   }
 
-  // sections that are now missing
+  // Sections that are now missing
   for (const Song &matching : old_sections) {
     if (!used_ids.contains(matching.id())) {
       t->deleted_songs << matching;
     }
   }
 
+  t->AddToProgress(1);
+
 }
 
-void CollectionWatcher::UpdateNonCueAssociatedSong(const QString &file, const Song &matching_song, const QUrl &image, bool cue_deleted, ScanTransaction *t) {
+void CollectionWatcher::UpdateNonCueAssociatedSong(const QString &file, const Song &matching_song, const QUrl &image, bool cue_deleted, std::shared_ptr<ScanTransaction> t) {
 
-  // If a cue got deleted, we turn it's first section into the new 'raw' (cueless) song and we just remove the rest of the sections from the collection
+  t->AddToProgressMax(1);
+
+  // If a CUE got deleted, we turn it's first section into the new 'raw' (cueless) song and we just remove the rest of the sections from the collection
   if (cue_deleted) {
     for (const Song &song : backend_->GetSongsByUrl(QUrl::fromLocalFile(file))) {
       if (!song.IsMetadataAndArtEqual(matching_song)) {
@@ -542,23 +570,85 @@ void CollectionWatcher::UpdateNonCueAssociatedSong(const QString &file, const So
 
   Song song_on_disk(source_);
   song_on_disk.set_directory_id(t->dir());
-  TagReaderClient::Instance()->ReadFileBlocking(file, &song_on_disk);
+  TagReaderReply *reply = TagReaderClient::Instance()->ReadFile(file);
 
-  if (song_on_disk.is_valid()) {
-    PreserveUserSetData(file, image, matching_song, &song_on_disk, t);
+  QObject::connect(reply, &TagReaderReply::Finished, this, [=] { UpdateNonCueAssociatedSongFinished(reply, t, file, matching_song, image); }, Qt::QueuedConnection);
+  t->tagreader_replies_ << reply;
+#if 0
+  std::shared_ptr<QTimer> timer = std::make_shared<QTimer>();
+  timer->setSingleShot(true);
+  timer->setInterval(30000);
+  timer->start();
+  t->tagreader_timers_.insert(reply, timer);
+  connect(timer.get(), &QTimer::timeout, [=] { UpdateNonCueAssociatedSongTimeout(reply, t, file, matching_song, image); });
+#endif
+
+}
+
+void CollectionWatcher::UpdateNonCueAssociatedSongFinished(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const Song &matching_song, const QUrl &image) {
+
+  if (!transactions_.contains(t) || !t->tagreader_replies_.contains(reply)) return;
+  t->tagreader_replies_.removeAll(reply);
+
+  if (t->tagreader_timers_.contains(reply)) {
+    std::shared_ptr<QTimer> timer = t->tagreader_timers_.take(reply);
+    timer->stop();
+  }
+
+  if (reply->is_successful()) {
+    Song song_on_disk;
+    song_on_disk.InitFromProtobuf(reply->message().read_file_response().metadata());
+
+    if (song_on_disk.is_valid()) {
+      PreserveUserSetData(file, image, matching_song, &song_on_disk, t);
+    }
+  }
+
+  reply->deleteLater();
+
+  t->AddToProgress(1);
+
+  if (t->tagreader_replies_.count() == 0 && transactions_.contains(t)) {
+    transactions_.removeAll(t);
   }
 
 }
 
-SongList CollectionWatcher::ScanNewFile(const QString &file, const QString &path, const QString &matching_cue, QSet<QString> *cues_processed) {
+void CollectionWatcher::UpdateNonCueAssociatedSongTimeout(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const Song &matching_song, const QUrl &image) {
+
+  if (!t->tagreader_timers_.contains(reply) || !t->tagreader_replies_.contains(reply)) return;
+  t->tagreader_timers_.remove(reply);
+
+  qLog(Error) << "Scanning" << file << "timed out." << reply->is_finished() << reply->is_successful();
+
+  if (reply->is_successful()) {
+    UpdateNonCueAssociatedSongFinished(reply, t, file, matching_song, image);
+  }
+  else {
+    t->tagreader_replies_.removeAll(reply);
+    reply->Abort();
+    t->AddToProgress(1);
+    if (t->tagreader_replies_.count() == 0 && transactions_.contains(t)) {
+      transactions_.removeAll(t);
+    }
+  }
+
+}
+
+SongList CollectionWatcher::ScanNewFile(std::shared_ptr<ScanTransaction> t, const QString &file, const QString &path, const QString &matching_cue, QSet<QString> *cues_processed, const QUrl &image) {
+
+  t->AddToProgressMax(1);
 
   SongList song_list;
 
   quint64 matching_cue_mtime = GetMtimeForCue(matching_cue);
   // If it's a cue - create virtual tracks
   if (matching_cue_mtime) {
-    // don't process the same cue many times
-    if (cues_processed->contains(matching_cue)) return song_list;
+    // Don't process the same CUE many times
+    if (cues_processed->contains(matching_cue)) {
+      t->AddToProgress(1);
+      return song_list;
+    }
 
     QFile cue(matching_cue);
     cue.open(QIODevice::ReadOnly);
@@ -580,22 +670,86 @@ SongList CollectionWatcher::ScanNewFile(const QString &file, const QString &path
       *cues_processed << matching_cue;
     }
 
-    // it's a normal media file
+    t->AddToProgress(1);
+
+    // It's a normal media file
   }
   else {
     Song song(source_);
-    TagReaderClient::Instance()->ReadFileBlocking(file, &song);
-    if (song.is_valid()) {
-      song.set_source(source_);
-      song_list << song;
-    }
+    TagReaderReply *reply = TagReaderClient::Instance()->ReadFile(file);
+    QObject::connect(reply, &TagReaderReply::Finished, this, [=] { ScanNewFileFinished(reply, t, file, image); }, Qt::QueuedConnection);
+    t->tagreader_replies_ << reply;
+#if 0
+    std::shared_ptr<QTimer> timer = std::make_shared<QTimer>();
+    timer->setSingleShot(true);
+    timer->setInterval(30000);
+    timer->start();
+    t->tagreader_timers_.insert(reply, timer);
+    connect(timer.get(), &QTimer::timeout, [=] { ScanNewFileTimeout(reply, t, file, image); });
+#endif
   }
 
   return song_list;
 
 }
 
-void CollectionWatcher::PreserveUserSetData(const QString &file, const QUrl &image, const Song &matching_song, Song *out, ScanTransaction *t) {
+void CollectionWatcher::ScanNewFileFinished(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const QUrl &image) {
+
+  if (!transactions_.contains(t) || !t->tagreader_replies_.contains(reply)) return;
+
+  t->tagreader_replies_.removeAll(reply);
+
+  if (t->tagreader_timers_.contains(reply)) {
+    std::shared_ptr<QTimer> timer = t->tagreader_timers_.take(reply);
+    timer->stop();
+  }
+
+  if (reply->is_successful()) {
+    Song song_on_disk;
+    song_on_disk.InitFromProtobuf(reply->message().read_file_response().metadata());
+    if (song_on_disk.is_valid()) {
+      song_on_disk.set_source(source_);
+
+      qLog(Debug) << file << "created";
+
+      song_on_disk.set_directory_id(t->dir());
+      if (song_on_disk.art_automatic().isEmpty()) song_on_disk.set_art_automatic(image);
+      t->new_songs << song_on_disk;
+    }
+  }
+
+  reply->deleteLater();
+
+  t->AddToProgress(1);
+
+  if (t->tagreader_replies_.count() == 0 && transactions_.contains(t)) {
+    transactions_.removeAll(t);
+  }
+
+}
+
+void CollectionWatcher::ScanNewFileTimeout(TagReaderReply *reply, std::shared_ptr<ScanTransaction> t, const QString &file, const QUrl &image) {
+
+  if (!t->tagreader_timers_.contains(reply) || !t->tagreader_replies_.contains(reply)) return;
+  t->tagreader_timers_.remove(reply);
+
+  qLog(Error) << "Scanning" << file << "timed out." << reply->is_finished() << reply->is_successful();
+
+  if (reply->is_successful()) {
+    ScanNewFileFinished(reply, t, file, image);
+  }
+  else {
+    t->tagreader_replies_.removeAll(reply);
+    reply->Abort();
+    t->AddToProgress(1);
+    if (t->tagreader_replies_.count() == 0 && transactions_.contains(t)) {
+      transactions_.removeAll(t);
+    }
+  }
+
+}
+
+void CollectionWatcher::PreserveUserSetData(const QString &file, const QUrl &image, const Song &matching_song, Song *out, std::shared_ptr<ScanTransaction> t) {
 
   out->set_id(matching_song.id());
 
@@ -710,22 +864,30 @@ void CollectionWatcher::RescanPathsNow() {
 
   for (int dir : rescan_queue_.keys()) {
     if (stop_requested_) break;
-    ScanTransaction transaction(this, dir, false, false, mark_songs_unavailable_);
-    transaction.AddToProgressMax(rescan_queue_[dir].count());
+    std::shared_ptr<ScanTransaction> transaction(std::make_shared<ScanTransaction>(this, dir, false, false, mark_songs_unavailable_));
+    transactions_ << transaction;
+    //transaction->AddToProgressMax(rescan_queue_[dir].count());
 
     for (const QString &path : rescan_queue_[dir]) {
-      if (stop_requested_) break;
+      if (stop_requested_) {
+        break;
+      }
       Subdirectory subdir;
       subdir.directory_id = dir;
       subdir.mtime = 0;
       subdir.path = path;
-      ScanSubdirectory(path, subdir, &transaction);
+      ScanSubdirectory(path, subdir, transaction);
     }
+
+    if (transaction->tagreader_replies_.count() == 0 && transactions_.contains(transaction)) {
+      transactions_.removeAll(transaction);
+    }
+
   }
 
   rescan_queue_.clear();
 
-  emit CompilationsNeedUpdating();
+  //emit CompilationsNeedUpdating();
 
 }
 
@@ -831,13 +993,13 @@ void CollectionWatcher::ReloadSettings() {
 
 }
 
-void CollectionWatcher::SetRescanPausedAsync(bool pause) {
+void CollectionWatcher::SetRescanPausedAsync(const bool pause) {
 
   QMetaObject::invokeMethod(this, "SetRescanPaused", Qt::QueuedConnection, Q_ARG(bool, pause));
 
 }
 
-void CollectionWatcher::SetRescanPaused(bool pause) {
+void CollectionWatcher::SetRescanPaused(const bool pause) {
 
   rescan_paused_ = pause;
   if (!rescan_paused_ && !rescan_queue_.isEmpty()) RescanPathsNow();
@@ -884,10 +1046,11 @@ void CollectionWatcher::RescanTracksNow() {
       QString songdir = song.url().toLocalFile().section('/', 0, -2);
       if (!scanned_dirs.contains(songdir)) {
         qLog(Debug) << "Song" << song.title() << "dir id" << song.directory_id() << "dir" << songdir;
-        ScanTransaction transaction(this, song.directory_id(), false, false, mark_songs_unavailable_);
-        ScanSubdirectory(songdir, Subdirectory(), &transaction);
+        std::shared_ptr<ScanTransaction> transaction(std::make_shared<ScanTransaction>(this, song.directory_id(), false, false, mark_songs_unavailable_));
+        transactions_ << transaction;
+        ScanSubdirectory(songdir, Subdirectory(), transaction);
         scanned_dirs << songdir;
-        emit CompilationsNeedUpdating();
+        //emit CompilationsNeedUpdating();
       }
       else {
         qLog(Debug) << "Directory" << songdir << "already scanned - skipping.";
@@ -898,24 +1061,31 @@ void CollectionWatcher::RescanTracksNow() {
 
 }
 
-void CollectionWatcher::PerformScan(bool incremental, bool ignore_mtimes) {
+void CollectionWatcher::PerformScan(const bool incremental, const bool ignore_mtimes) {
 
   stop_requested_ = false;
 
   for (const Directory &dir : watched_dirs_.values()) {
 
     if (stop_requested_) break;
-    ScanTransaction transaction(this, dir.id, incremental, ignore_mtimes, mark_songs_unavailable_);
-    SubdirectoryList subdirs(transaction.GetAllSubdirs());
-    transaction.AddToProgressMax(subdirs.count());
+
+    std::shared_ptr<ScanTransaction> transaction(std::make_shared<ScanTransaction>(this, dir.id, incremental, ignore_mtimes, mark_songs_unavailable_));
+    transactions_ << transaction;
+    SubdirectoryList subdirs(transaction->GetAllSubdirs());
+    //transaction->AddToProgressMax(subdirs.count());
 
     for (const Subdirectory &subdir : subdirs) {
       if (stop_requested_) break;
 
-      ScanSubdirectory(subdir.path, subdir, &transaction);
+      ScanSubdirectory(subdir.path, subdir, transaction);
     }
+
+    if (transaction->tagreader_replies_.count() == 0 && transactions_.contains(transaction)) {
+      transactions_.removeAll(transaction);
+    }
+
   }
 
-  emit CompilationsNeedUpdating();
+  //emit CompilationsNeedUpdating();
 
 }
