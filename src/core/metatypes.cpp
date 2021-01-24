@@ -71,6 +71,8 @@
 
 #include "smartplaylists/playlistgenerator_fwd.h"
 
+#include "widgets/collapsibleinfopane.h"
+
 void RegisterMetaTypes() {
 
   qRegisterMetaType<const char*>("const char*");
@@ -139,5 +141,7 @@ void RegisterMetaTypes() {
   qRegisterMetaType<InternetSearchView::Result>("InternetSearchView::Result");
 
   qRegisterMetaType<PlaylistGeneratorPtr>("PlaylistGeneratorPtr");
+
+  qRegisterMetaType<CollapsibleInfoPane::Data>("CollapsibleInfoPane::Data");
 
 }

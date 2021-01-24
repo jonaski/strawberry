@@ -180,6 +180,7 @@ void BehaviourSettingsPage::Load() {
 
   ui_->checkbox_resumeplayback->setChecked(s.value("resumeplayback", false).toBool());
   ui_->checkbox_playingwidget->setChecked(s.value("playing_widget", true).toBool());
+  ui_->checkbox_artistbio->setChecked(s.value("artistbio", false).toBool());
 
 #ifndef Q_OS_MACOS
   StartupBehaviour behaviour = StartupBehaviour(s.value("startupbehaviour", Startup_Remember).toInt());
@@ -244,6 +245,7 @@ void BehaviourSettingsPage::Save() {
   s.setValue("resumeplayback", ui_->checkbox_resumeplayback->isChecked());
   s.setValue("playing_widget", ui_->checkbox_playingwidget->isChecked());
   s.setValue("scrolltrayicon", ui_->checkbox_scrolltrayicon->isChecked());
+  s.setValue("artistbio", ui_->checkbox_artistbio->isChecked());
 
   StartupBehaviour behaviour = Startup_Remember;
   if (ui_->radiobutton_remember->isChecked()) behaviour = Startup_Remember;
