@@ -1318,7 +1318,7 @@ jobs:
   upload-macos-catalina:
     name: Upload macOS Catalina DMG
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/macos'
     needs:
       - build-macos-catalina
     steps:
@@ -1341,7 +1341,7 @@ jobs:
   upload-macos-bigsur:
     name: Upload macOS Big Sur DMG
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/macos'
     needs:
       - build-macos-bigsur
     steps:

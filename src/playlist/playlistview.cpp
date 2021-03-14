@@ -189,7 +189,7 @@ PlaylistView::PlaylistView(QWidget *parent)
   setAlternatingRowColors(true);
   setAttribute(Qt::WA_MacShowFocusRect, false);
 #ifdef Q_OS_MACOS
-  setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+  setUniformRowHeights(true);
 #endif
 
   QObject::connect(header_, &PlaylistHeader::sectionResized, this, &PlaylistView::SetHeaderState);
