@@ -1049,14 +1049,14 @@ jobs:
           create-dmg
           taglib
 
-      - name: Install Sparkle
-        run: brew install --cask sparkle
+      #- name: Install Sparkle
+      #  run: brew install --cask sparkle
 
-      - name: Link Sparkle
-        shell: bash
-        run: |
-          sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework /Library/Frameworks/Sparkle.framework
-          sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework.dSYM /Library/Frameworks/Sparkle.framework.dSYM
+      #- name: Link Sparkle
+      #  shell: bash
+      #  run: |
+      #    sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework /Library/Frameworks/Sparkle.framework
+      #    sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework.dSYM /Library/Frameworks/Sparkle.framework.dSYM
 
       - name: Create Build Environment
         shell: bash
@@ -1082,9 +1082,6 @@ jobs:
         working-directory: build
         shell: bash
         run: make install
-      - name: Hack to make macdeployqt find plugins
-        shell: bash
-        run: sudo ln -s /usr/local/Cellar/qt/$(ls /usr/local/Cellar/qt/ | tail -n1)/share/qt/plugins /usr/local/plugins
       - name: Create DMG
         working-directory: build
         shell: bash
@@ -1125,14 +1122,14 @@ jobs:
           create-dmg
           taglib
 
-      - name: Install Sparkle
-        run: brew install --cask sparkle
+      #- name: Install Sparkle
+      #  run: brew install --cask sparkle
 
-      - name: Link Sparkle
-        shell: bash
-        run: |
-          sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework /Library/Frameworks/Sparkle.framework
-          sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework.dSYM /Library/Frameworks/Sparkle.framework.dSYM
+      #- name: Link Sparkle
+      #  shell: bash
+      #  run: |
+      #    sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework /Library/Frameworks/Sparkle.framework
+      #    sudo ln -s /usr/local/Caskroom/sparkle/$(ls /usr/local/Caskroom/sparkle | head -n1)/Sparkle.framework.dSYM /Library/Frameworks/Sparkle.framework.dSYM
 
       - name: Create Build Environment
         shell: bash
